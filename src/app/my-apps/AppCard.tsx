@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import Link from "next/link";
 
 export default function AppCard({
   id, name, description, status, updatedAt, html,
@@ -61,7 +62,9 @@ export default function AppCard({
 
       <div style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem", flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <strong style={{ fontSize: "0.95rem", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</strong>
+          <Link href={`/my-apps/${id}`} style={{ fontSize: "0.95rem", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 700, color: "var(--fg)", textDecoration: "none" }}>
+            {name}
+          </Link>
           <span style={{ fontSize: "0.65rem", textTransform: "uppercase", letterSpacing: "0.05em", color: status === "ready" ? "var(--accent)" : "var(--fg-muted)" }}>{status}</span>
         </div>
         {description && (
@@ -73,6 +76,7 @@ export default function AppCard({
           {new Date(updatedAt).toLocaleDateString()}
         </span>
         <div style={{ display: "flex", gap: "0.4rem", marginTop: "auto", flexWrap: "wrap" }}>
+          <Link href={`/my-apps/${id}`} className="btn btn-ghost" style={{ padding: "0.3rem 0.7rem", fontSize: "0.75rem" }}>✎ Edit</Link>
           <button onClick={openFull} className="btn btn-ghost" style={{ padding: "0.3rem 0.7rem", fontSize: "0.75rem" }}>↗ Open</button>
           <button onClick={download} className="btn btn-ghost" style={{ padding: "0.3rem 0.7rem", fontSize: "0.75rem" }}>↓ Save</button>
           <button onClick={remove} disabled={deleting} className="btn btn-ghost" style={{ padding: "0.3rem 0.7rem", fontSize: "0.75rem", color: "#fca5a5", marginLeft: "auto" }}>
