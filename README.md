@@ -1,17 +1,35 @@
-# AppMaker — Reference & Tips
+# AppMaker
 
-This folder is a small reference stash about building apps with AI helpers (sometimes called "vibecoding" — describing what you want in plain language and letting an AI write the app). It holds a saved guide and a screenshot of online tips, kept for later reading. There's no app or code here — just material to learn from.
+AppMaker turns a plain-English description into a working little web app. You type something like "a tip calculator that splits the bill," and it hands back a single ready-to-use HTML file in a few seconds — preview it right there, tweak it by asking for changes, and save the ones you like to your account. It's for quickly spinning up small tools and toys without writing code or setting anything up.
 
-It's for the owner to revisit when they want to start building an app with AI tools.
-
-## What it holds
-- A saved PDF guide titled "AppMaker - Vibecoding Assistant"
-- A screenshot of a Reddit discussion recommending AI app-building tools and tips (mentions tools like Bolt and Lovable, and starter resources for building app layouts)
+## What it does
+- Describe an app in words, get a working HTML/CSS/JS file back instantly
+- Live preview in the page, plus copy, download, or open-in-new-tab
+- "Refine" an app by asking for changes — it edits the existing version and keeps a history
+- Sign in to save your apps; come back later to view, edit, or delete them
+- Free to run — it cycles through free AI models so there's no per-use cost
 
 ## Status
-Reference / reading material. No code or working app — just a PDF and an image saved for reference.
+Working. Needs one free AI key (OpenRouter) to generate, and it's built to deploy on Vercel at `appmaker.6x7.gr` with shared 6x7 login.
 
 ---
 ### For developers
-- `AppMaker · Vibecoding Assistant.pdf` — image-based PDF guide (text not machine-extractable).
-- `appmaker reddit instructions.png` — screenshot of a Reddit thread on AI app-builder tools and resources.
+
+**Stack:** Next.js 16 (App Router) + React 19 + TypeScript. Auth/DB via the shared `6x7-platform` Supabase project (schema `appmaker`). AI generation via OpenRouter free models, cycled by a TypeScript port of `llm-free-rotator` (`src/lib/llm-rotator.ts`).
+
+**Data model** (`appmaker` schema, RLS `auth.uid() = user_id`):
+- `apps` — one row per saved app. `generated_code` jsonb holds `{ entry, files }` (currently a single `index.html`). `generation` jsonb records provider + model.
+- `iterations` — one row per create/refine, the edit history (prompt, model, source, duration).
+
+**API:** `POST /api/generate` does both fresh generation (optional `save` → new `apps` row) and refine (`appId` → regenerates from prior HTML, updates the app, logs an iteration). Rate-limited per IP (`src/lib/rateLimit.ts`).
+
+**Auth:** Supabase SSR (`@supabase/ssr`) with a shared cookie `sb-6x7-auth` on `.6x7.gr`, so login carries across all 6x7 subdomains. Session refresh in `src/proxy.ts` (Next 16 proxy/middleware).
+
+**Pages:** `/` generate, `/my-apps` saved grid, `/my-apps/[id]` editor + history, `/auth/*` sign-in/out/callback.
+
+**Setup:**
+1. `npm install`
+2. `.env.local` needs `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (shared 6x7 project) and `OPENROUTER_API_KEY` (free at https://openrouter.ai/keys).
+3. `npm run dev` → http://localhost:3000
+
+**Deploy:** Vercel project linked to the `6x7-platform` Supabase project (Supabase env vars auto-inject). Add `OPENROUTER_API_KEY` in Vercel env. Point `appmaker.6x7.gr` at it. In Supabase Auth: add `https://appmaker.6x7.gr/auth/callback` to redirect URLs and enable Google.
