@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 
 const EXAMPLES = [
   "A pomodoro timer with sessions counter",
@@ -13,15 +14,20 @@ const EXAMPLES = [
 export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
   const [prompt, setPrompt] = useState("");
   const [html, setHtml] = useState("");
+  const [model, setModel] = useState("");
+  const [appId, setAppId] = useState<string | null>(null);
+  const [refinePrompt, setRefinePrompt] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refining, setRefining] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  // Fresh generation. save=true creates an `apps` row (and returns its id).
   const generate = async (p = prompt, save = false) => {
     if (!p.trim()) return;
-    setLoading(true); setError(""); setHtml(""); setSaved(false);
+    setLoading(true); setError(""); setHtml(""); setSaved(false); setAppId(null);
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -31,11 +37,39 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setHtml(data.html);
-      if (save) setSaved(true);
+      setModel(data.model || "");
+      if (data.appId) setAppId(data.appId);
+      if (save) {
+        if (data.saveError) setError("Generated, but save failed: " + data.saveError);
+        else setSaved(true);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Refine an already-saved app (requires appId). Persists a new iteration.
+  const refine = async () => {
+    if (!refinePrompt.trim() || !appId) return;
+    setRefining(true); setError("");
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: refinePrompt, appId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setHtml(data.html);
+      setModel(data.model || "");
+      if (data.saveError) setError("Refined, but save failed: " + data.saveError);
+      setRefinePrompt("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRefining(false);
     }
   };
 
@@ -50,6 +84,11 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
     a.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     a.download = "app.html";
     a.click();
+  };
+
+  const openFull = () => {
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); }
   };
 
   return (
@@ -69,22 +108,21 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
           }}
         />
         <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem", flexWrap: "wrap", alignItems: "center" }}>
-          <button
-            onClick={() => generate(prompt, false)}
-            disabled={loading || !prompt.trim()}
-            className="btn btn-primary"
-          >
+          <button onClick={() => generate(prompt, false)} disabled={loading || !prompt.trim()} className="btn btn-primary">
             {loading ? "Generating…" : "⚡ Generate"}
           </button>
-          {isLoggedIn && html && !saved && (
-            <button onClick={() => generate(prompt, true)} className="btn btn-ghost">
-              💾 Save
-            </button>
+          {isLoggedIn && html && !saved && !appId && (
+            <button onClick={() => generate(prompt, true)} disabled={loading} className="btn btn-ghost">💾 Save</button>
           )}
-          {saved && <span style={{ color: "var(--accent)", fontSize: "0.9rem" }}>✓ Saved</span>}
-          <span style={{ color: "var(--fg-muted)", fontSize: "0.78rem", marginLeft: "auto" }}>
-            ⌘↵ to generate
-          </span>
+          {saved && (
+            <span style={{ color: "var(--accent)", fontSize: "0.9rem" }}>
+              ✓ Saved · <Link href="/my-apps" style={{ color: "var(--accent)", textDecoration: "underline" }}>My Apps</Link>
+            </span>
+          )}
+          {!isLoggedIn && html && (
+            <Link href="/auth/sign-in" style={{ color: "var(--fg-muted)", fontSize: "0.82rem" }}>Sign in to save & refine →</Link>
+          )}
+          <span style={{ color: "var(--fg-muted)", fontSize: "0.78rem", marginLeft: "auto" }}>⌘↵ to generate</span>
         </div>
       </div>
 
@@ -107,6 +145,12 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
         </div>
       )}
 
+      {loading && (
+        <div className="glass" style={{ padding: "2rem", textAlign: "center", color: "var(--fg-muted)", marginBottom: "1rem" }}>
+          Building your app… trying the best free model available.
+        </div>
+      )}
+
       {error && (
         <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: "0.75rem", padding: "1rem", color: "#fca5a5", marginBottom: "1rem" }}>
           {error}
@@ -117,35 +161,42 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
       {html && (
         <div className="glass" style={{ overflow: "hidden" }}>
           {/* Toolbar */}
-          <div style={{ display: "flex", gap: "0.5rem", padding: "0.75rem 1rem", borderBottom: "1px solid var(--border)", alignItems: "center" }}>
-            <span style={{ color: "var(--fg-muted)", fontSize: "0.8rem", flex: 1 }}>Preview</span>
+          <div style={{ display: "flex", gap: "0.5rem", padding: "0.75rem 1rem", borderBottom: "1px solid var(--border)", alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: "var(--fg-muted)", fontSize: "0.8rem", flex: 1 }}>
+              Preview {model && <span style={{ opacity: 0.6 }}>· {model.replace(":free", "")}</span>}
+            </span>
             <button onClick={copy} className="btn btn-ghost" style={{ padding: "0.3rem 0.9rem", fontSize: "0.8rem" }}>
               {copied ? "✓ Copied" : "Copy HTML"}
             </button>
-            <button onClick={download} className="btn btn-ghost" style={{ padding: "0.3rem 0.9rem", fontSize: "0.8rem" }}>
-              ↓ Download
-            </button>
-            <button
-              onClick={() => {
-                if (iframeRef.current) {
-                  const w = iframeRef.current.contentWindow?.open("", "_blank");
-                  w?.document.write(html); w?.document.close();
-                }
-              }}
-              className="btn btn-ghost"
-              style={{ padding: "0.3rem 0.9rem", fontSize: "0.8rem" }}
-            >
-              ↗ Open
-            </button>
+            <button onClick={download} className="btn btn-ghost" style={{ padding: "0.3rem 0.9rem", fontSize: "0.8rem" }}>↓ Download</button>
+            <button onClick={openFull} className="btn btn-ghost" style={{ padding: "0.3rem 0.9rem", fontSize: "0.8rem" }}>↗ Open</button>
           </div>
-          {/* iframe preview */}
+          {/* iframe preview — allow-scripts WITHOUT allow-same-origin keeps it in
+              an opaque origin: generated code runs but cannot touch the parent. */}
           <iframe
             ref={iframeRef}
             srcDoc={html}
-            sandbox="allow-scripts allow-forms"
-            style={{ width: "100%", height: "480px", border: "none", display: "block" }}
+            sandbox="allow-scripts"
+            style={{ width: "100%", height: "480px", border: "none", display: "block", background: "#fff" }}
             title="Generated app preview"
           />
+
+          {/* Refine box (only for saved apps) */}
+          {appId && (
+            <div style={{ display: "flex", gap: "0.5rem", padding: "0.75rem 1rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
+              <input
+                value={refinePrompt}
+                onChange={(e) => setRefinePrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") refine(); }}
+                placeholder="Refine it… e.g. ‘make the buttons bigger and add a reset’"
+                style={{ flex: 1, minWidth: "200px", background: "rgba(255,255,255,0.04)", border: "1px solid var(--border)", borderRadius: "0.6rem", padding: "0.5rem 0.8rem", color: "var(--fg)", fontSize: "0.85rem", outline: "none" }}
+              />
+              <button onClick={refine} disabled={refining || !refinePrompt.trim()} className="btn btn-primary" style={{ padding: "0.4rem 1rem", fontSize: "0.82rem" }}>
+                {refining ? "Refining…" : "↻ Refine"}
+              </button>
+            </div>
+          )}
+
           {/* Raw code toggle */}
           <details style={{ borderTop: "1px solid var(--border)" }}>
             <summary style={{ padding: "0.75rem 1rem", cursor: "pointer", color: "var(--fg-muted)", fontSize: "0.8rem" }}>
