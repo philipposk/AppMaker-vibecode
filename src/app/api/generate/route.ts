@@ -1,6 +1,8 @@
 // AI generation via llm-free-rotator (OpenRouter, all free models).
 // Fresh generate (optionally saved as an `apps` row) + refine (appId → new
-// `iterations` row + updated app). Aligned to the shared `appmaker` schema.
+// `iterations` row + updated app, or `html` → edit an unsaved app in place) +
+// saveOnly (persist the HTML on screen without another model call).
+// Aligned to the shared `appmaker` schema.
 
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -33,26 +35,54 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { prompt?: string; save?: boolean; appId?: string };
+  let body: { prompt?: string; save?: boolean; appId?: string; html?: string; saveOnly?: boolean; model?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
-  const { prompt, save, appId } = body;
-  if (!prompt?.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
-  if (prompt.length > 4000) return NextResponse.json({ error: "prompt too long (max 4000 chars)" }, { status: 400 });
+  const { prompt, save, appId, html: clientHtml, saveOnly } = body;
+  if (prompt && prompt.length > 4000) return NextResponse.json({ error: "prompt too long (max 4000 chars)" }, { status: 400 });
+  if (clientHtml !== undefined && typeof clientHtml !== "string") return NextResponse.json({ error: "html must be a string" }, { status: 400 });
+  if (clientHtml && clientHtml.length > 200_000) return NextResponse.json({ error: "app too large to edit (max 200k chars)" }, { status: 400 });
 
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "OPENROUTER_API_KEY not set" }, { status: 500 });
 
-  const isRefine = Boolean(appId);
+  const isRefine = Boolean(appId) || Boolean(clientHtml);
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
+  // Save what's on screen as a new app — no regeneration. Runs before the
+  // prompt check: an empty prompt just yields "Untitled app".
+  if (saveOnly) {
+    if (!user) return NextResponse.json({ error: "sign in to save" }, { status: 401 });
+    if (!clientHtml) return NextResponse.json({ error: "nothing to save" }, { status: 400 });
+    const { data: inserted, error: insErr } = await supabase
+      .from("apps")
+      .insert({
+        user_id: user.id,
+        name: deriveName(prompt || "Untitled app"),
+        description: prompt?.trim() ? prompt : null,
+        type: APP_TYPE,
+        status: "ready",
+        generated_code: packCode(clientHtml),
+        generation: { provider: "openrouter", model: body.model ?? null },
+      })
+      .select("id")
+      .single();
+    if (insErr) return NextResponse.json({ html: clientHtml, appId: null, saved: false, saveError: insErr.message });
+    await supabase.from("iterations").insert({
+      app_id: inserted.id, user_id: user.id, prompt: prompt ?? "", provider: "openrouter", model: body.model ?? null, source: "create",
+    });
+    return NextResponse.json({ html: clientHtml, model: body.model ?? "", appId: inserted.id, saved: true, saveError: null });
+  }
+
+  if (!prompt?.trim()) return NextResponse.json({ error: "prompt required" }, { status: 400 });
+
   // For refine we need the existing app (RLS guarantees ownership).
-  let previousHtml = "";
-  if (isRefine) {
+  let previousHtml = clientHtml ?? "";
+  if (appId) {
     if (!user) return NextResponse.json({ error: "sign in to refine an app" }, { status: 401 });
     const { data: app, error } = await supabase
       .from("apps")
@@ -67,7 +97,7 @@ export async function POST(req: Request) {
     ? [
         { role: "system", content: SYSTEM },
         { role: "user", content: "Here is the current HTML app:\n\n" + previousHtml },
-        { role: "user", content: "Apply this change and return the FULL updated HTML file:\n\n" + prompt },
+        { role: "user", content: "Apply ONLY this change. Keep every existing feature, style and behaviour exactly as it is. Return the FULL updated HTML file:\n\n" + prompt },
       ]
     : [
         { role: "system", content: SYSTEM },
@@ -92,10 +122,10 @@ export async function POST(req: Request) {
   let savedAppId: string | null = appId ?? null;
   let saveError: string | null = null;
 
-  // Persist (refine always persists; fresh generate only if save=true + signed in).
-  if ((isRefine || save) && user) {
+  // Persist (saved-app refine always persists; otherwise only if save=true + signed in).
+  if ((appId || save) && user) {
     try {
-      if (isRefine) {
+      if (appId) {
         const { error: upErr } = await supabase
           .from("apps")
           .update({ generated_code: packCode(html), status: "ready", updated_at: new Date().toISOString() })
@@ -140,7 +170,7 @@ export async function POST(req: Request) {
     html,
     model: result.model,
     appId: savedAppId,
-    saved: (isRefine || save) ? !saveError : false,
+    saved: (appId || save) ? !saveError : false,
     saveError,
   });
 }

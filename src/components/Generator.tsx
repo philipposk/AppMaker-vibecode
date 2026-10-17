@@ -19,14 +19,19 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
   const [refinePrompt, setRefinePrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [refining, setRefining] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Prompt that produced the on-screen HTML (kept across refines) — what Save records.
+  const [genPrompt, setGenPrompt] = useState("");
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // One request at a time: generate, refine and save all share this guard.
+  const busy = loading || refining || saving;
 
   // Fresh generation. save=true creates an `apps` row (and returns its id).
   const generate = async (p = prompt, save = false) => {
-    if (!p.trim()) return;
+    if (busy || !p.trim()) return;
     setLoading(true); setError(""); setHtml(""); setSaved(false); setAppId(null);
     try {
       const res = await fetch("/api/generate", {
@@ -38,6 +43,7 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
       if (!res.ok) throw new Error(data.error);
       setHtml(data.html);
       setModel(data.model || "");
+      setGenPrompt(p);
       if (data.appId) setAppId(data.appId);
       if (save) {
         if (data.saveError) setError("Generated, but save failed: " + data.saveError);
@@ -50,15 +56,37 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
     }
   };
 
-  // Refine an already-saved app (requires appId). Persists a new iteration.
+  // Save the app on screen as-is (no new generation).
+  const saveCurrent = async () => {
+    if (busy || !html) return;
+    setSaving(true); setError("");
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: genPrompt || prompt, html, model, saveOnly: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      if (data.saveError) setError("Save failed: " + data.saveError);
+      else { setSaved(true); setAppId(data.appId); }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Change the current app instead of starting over. Saved apps (appId) are
+  // edited server-side and get a new iteration; unsaved ones send their HTML.
   const refine = async () => {
-    if (!refinePrompt.trim() || !appId) return;
+    if (busy || !refinePrompt.trim() || !html) return;
     setRefining(true); setError("");
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: refinePrompt, appId }),
+        body: JSON.stringify(appId ? { prompt: refinePrompt, appId } : { prompt: refinePrompt, html }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -108,11 +136,11 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
           }}
         />
         <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem", flexWrap: "wrap", alignItems: "center" }}>
-          <button onClick={() => generate(prompt, false)} disabled={loading || !prompt.trim()} className="btn btn-primary">
-            {loading ? "Generating…" : "⚡ Generate"}
+          <button onClick={() => generate(prompt, false)} disabled={busy || !prompt.trim()} className="btn btn-primary">
+            {loading ? "Generating…" : html ? "⚡ Start over" : "⚡ Generate"}
           </button>
           {isLoggedIn && html && !saved && !appId && (
-            <button onClick={() => generate(prompt, true)} disabled={loading} className="btn btn-ghost">💾 Save</button>
+            <button onClick={saveCurrent} disabled={busy} className="btn btn-ghost">{saving ? "Saving…" : "💾 Save"}</button>
           )}
           {saved && (
             <span style={{ color: "var(--accent)", fontSize: "0.9rem" }}>
@@ -120,7 +148,7 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
             </span>
           )}
           {!isLoggedIn && html && (
-            <Link href="/auth/sign-in" style={{ color: "var(--fg-muted)", fontSize: "0.82rem" }}>Sign in to save & refine →</Link>
+            <Link href="/auth/sign-in" style={{ color: "var(--fg-muted)", fontSize: "0.82rem" }}>Sign in to save →</Link>
           )}
           <span style={{ color: "var(--fg-muted)", fontSize: "0.78rem", marginLeft: "auto" }}>⌘↵ to generate</span>
         </div>
@@ -181,17 +209,17 @@ export default function Generator({ isLoggedIn }: { isLoggedIn: boolean }) {
             title="Generated app preview"
           />
 
-          {/* Refine box (only for saved apps) */}
-          {appId && (
+          {/* Refine box — edits the current app instead of regenerating it */}
+          {html && (
             <div style={{ display: "flex", gap: "0.5rem", padding: "0.75rem 1rem", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
               <input
                 value={refinePrompt}
                 onChange={(e) => setRefinePrompt(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") refine(); }}
-                placeholder="Refine it… e.g. ‘make the buttons bigger and add a reset’"
+                onKeyDown={(e) => { if (e.key === "Enter" && !busy) refine(); }}
+                placeholder="Change it… e.g. ‘add a delete button to each todo’"
                 style={{ flex: 1, minWidth: "200px", background: "rgba(255,255,255,0.04)", border: "1px solid var(--border)", borderRadius: "0.6rem", padding: "0.5rem 0.8rem", color: "var(--fg)", fontSize: "0.85rem", outline: "none" }}
               />
-              <button onClick={refine} disabled={refining || !refinePrompt.trim()} className="btn btn-primary" style={{ padding: "0.4rem 1rem", fontSize: "0.82rem" }}>
+              <button onClick={refine} disabled={busy || !refinePrompt.trim()} className="btn btn-primary" style={{ padding: "0.4rem 1rem", fontSize: "0.82rem" }}>
                 {refining ? "Refining…" : "↻ Refine"}
               </button>
             </div>
