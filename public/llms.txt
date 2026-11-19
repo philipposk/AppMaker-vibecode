@@ -1,0 +1,7 @@
+# AppMaker
+
+> Describe a web app in plain English, get working HTML/CSS/JS in seconds. Powered by free OpenRouter models.
+
+- [AppMaker — Vibe-code web apps with AI](https://appmaker.6x7.gr/)
+- [Sitemap](https://appmaker.6x7.gr/sitemap.xml)
+- Made by [6x7](https://6x7.gr/). [All 6x7 apps](https://portfolio.6x7.gr/)
