@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
-import { sharedCookieOptions } from "@/lib/supabase/cookies";
+import { cookieOptionsForHost, hostFromHeaders } from "@/lib/supabase/cookies";
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -9,7 +9,7 @@ export async function proxy(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      cookieOptions: sharedCookieOptions,
+      cookieOptions: cookieOptionsForHost(hostFromHeaders(request.headers)),
       cookies: {
         getAll() {
           return request.cookies.getAll();
